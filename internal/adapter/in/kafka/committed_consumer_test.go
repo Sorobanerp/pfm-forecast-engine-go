@@ -7,6 +7,8 @@ import (
 
 	redisadapter "github.com/dantas-pfm/pfm-forecast-engine-go/internal/adapter/out/redis"
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/application/service"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestKafkaConsumerAndRedisCacheUpdateUnder25ms(t *testing.T) {
@@ -48,4 +50,18 @@ func TestKafkaConsumerAndRedisCacheUpdateUnder25ms(t *testing.T) {
 	if !cached.TotalProjectedOutflow.Equal(res.TotalProjectedOutflow) {
 		t.Fatalf("cached total projected outflow mismatch: %s vs %s", cached.TotalProjectedOutflow, res.TotalProjectedOutflow)
 	}
+
+	// Close nil reader
+	err = consumer.Close()
+	assert.NoError(t, err)
+
+	// Invalid JSON payload
+	_, _, err = consumer.ProcessMessagePayload(context.Background(), []byte("{invalid json"))
+	assert.Error(t, err)
+
+	// Consumer with brokers
+	consumerWithBrokers := NewLedgerCommittedConsumer([]string{"localhost:9092"}, "grp-1", svc)
+	require.NotNil(t, consumerWithBrokers)
+	err = consumerWithBrokers.Close()
+	assert.NoError(t, err)
 }
