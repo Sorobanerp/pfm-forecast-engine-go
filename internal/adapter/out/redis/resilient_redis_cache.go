@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	DefaultRedisTimeout = 500 * time.Millisecond
-	DefaultMaxRetries   = 2
+	DefaultRedisTimeout        = 500 * time.Millisecond
+	DefaultMaxRetries          = 2
+	DefaultForecastSnapshotTTL = 15 * time.Minute
 )
 
 var ErrCircuitBreakerOpen = errors.New("redis circuit breaker is OPEN")
@@ -41,6 +42,8 @@ func NewResilientRedisCacheAdapter(addr string) *ResilientRedisCacheAdapter {
 			DialTimeout:  DefaultRedisTimeout,
 			ReadTimeout:  DefaultRedisTimeout,
 			WriteTimeout: DefaultRedisTimeout,
+			PoolSize:     32,
+			MinIdleConns: 4,
 		})
 	}
 	return &ResilientRedisCacheAdapter{
@@ -77,7 +80,7 @@ func (a *ResilientRedisCacheAdapter) SaveForecastSnapshot(
 	var lastErr error
 	for attempt := 0; attempt <= a.maxRetries; attempt++ {
 		callCtx, cancel := context.WithTimeout(ctx, a.timeout)
-		lastErr = a.client.Set(callCtx, key, payload, 24*time.Hour).Err()
+		lastErr = a.client.Set(callCtx, key, payload, DefaultForecastSnapshotTTL).Err()
 		cancel()
 		if lastErr == nil {
 			a.recordSuccess()
