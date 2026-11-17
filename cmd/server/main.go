@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,21 +19,31 @@ import (
 	"go.opentelemetry.io/otel"
 )
 
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func main() {
 	_ = otel.Tracer("pfm-forecast-engine-go")
 
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
-		redisAddr = "localhost:6379"
+		redisAddr = "localhost:16379"
 	}
 	grpcPort := os.Getenv("GRPC_PORT")
 	if grpcPort == "" {
-		grpcPort = ":9091"
+		grpcPort = "18110"
+	}
+	if !strings.Contains(grpcPort, ":") {
+		grpcPort = ":" + grpcPort
 	}
 
 	cacheAdapter := redisadapter.NewResilientRedisCacheAdapter(redisAddr)
 	engineService := service.NewForecastEngineService(cacheAdapter)
-	consumer := kafka.NewLedgerCommittedConsumer([]string{"localhost:9092"}, "pfm-forecast-engine-group", engineService)
+	consumer := kafka.NewLedgerCommittedConsumer(strings.Split(envOr("KAFKA_BROKERS", "localhost:19092"), ","), "pfm-forecast-engine-group", engineService)
 	defer func() { _ = consumer.Close() }()
 
 	grpcSrv := grpcadapter.NewForecastGrpcServer(engineService)
@@ -41,7 +52,7 @@ func main() {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"UP","service":"pfm-forecast-engine-go","port":9091}`))
+		_, _ = w.Write([]byte(`{"status":"UP","service":"pfm-forecast-engine-go","port":18110}`))
 	})
 	mux.HandleFunc("POST /pfm.v1.ForecastService/SimulateContractAmortization", func(w http.ResponseWriter, r *http.Request) {
 		var dto grpcadapter.SimulateContractRequestDTO
