@@ -205,7 +205,8 @@ func (s *ContractAmortizationSimulator) computeReducedTerm(
 		origPmt := computePricePmt(originalBalance, monthlyRate, originalTerm)
 		balance := newBalance
 		count := 0
-		for balance.GreaterThan(decimal.NewFromFloat(0.01)) && count < originalTerm {
+		oneCent := decimal.RequireFromString("0.0100")
+		for balance.GreaterThan(oneCent) && count < originalTerm {
 			count++
 			interest := balance.Mul(monthlyRate).RoundBank(4)
 			principal := origPmt.Sub(interest).RoundBank(4)
