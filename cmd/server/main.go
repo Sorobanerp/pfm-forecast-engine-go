@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,38 +17,32 @@ import (
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/adapter/in/kafka"
 	redisadapter "github.com/dantas-pfm/pfm-forecast-engine-go/internal/adapter/out/redis"
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/application/service"
+	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/observability"
 	"go.opentelemetry.io/otel"
 )
 
-func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, os.Getenv); err != nil {
+		stop()
+		log.Fatalf("forecast engine server error: %v", err) //nolint:gocritic
 	}
-	return fallback
 }
 
-func main() {
-	_ = otel.Tracer("pfm-forecast-engine-go")
-
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "localhost:16379"
-	}
-	grpcPort := os.Getenv("GRPC_PORT")
+// resolveGrpcAddr returns the listen address, defaulting the port and prefixing ":" when needed.
+func resolveGrpcAddr(getenv func(string) string) string {
+	grpcPort := getenv("GRPC_PORT")
 	if grpcPort == "" {
 		grpcPort = "18110"
 	}
 	if !strings.Contains(grpcPort, ":") {
 		grpcPort = ":" + grpcPort
 	}
+	return grpcPort
+}
 
-	cacheAdapter := redisadapter.NewResilientRedisCacheAdapter(redisAddr)
-	engineService := service.NewForecastEngineService(cacheAdapter)
-	consumer := kafka.NewLedgerCommittedConsumer(strings.Split(envOr("KAFKA_BROKERS", "localhost:19092"), ","), "pfm-forecast-engine-group", engineService)
-	defer func() { _ = consumer.Close() }()
-
-	grpcSrv := grpcadapter.NewForecastGrpcServer(engineService)
-
+func newMux(grpcSrv *grpcadapter.ForecastGrpcServer) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -69,23 +64,52 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(out)
 	})
+	return mux
+}
+
+// run wires the service and blocks until ctx is cancelled or the HTTP server fails.
+func run(ctx context.Context, getenv func(string) string) error {
+	_ = observability.InitOtlpConfig(getenv, "pfm-forecast-engine-go")
+	_ = otel.Tracer("pfm-forecast-engine-go")
+
+	redisAddr := getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:16379"
+	}
+	grpcPort := resolveGrpcAddr(getenv)
+
+	cacheAdapter := redisadapter.NewResilientRedisCacheAdapter(redisAddr)
+	engineService := service.NewForecastEngineService(cacheAdapter)
+	brokers := "localhost:19092"
+	if v := strings.TrimSpace(getenv("KAFKA_BROKERS")); v != "" {
+		brokers = v
+	}
+	consumer := kafka.NewLedgerCommittedConsumer(strings.Split(brokers, ","), "pfm-forecast-engine-group", engineService)
+	defer func() { _ = consumer.Close() }()
+
+	grpcSrv := grpcadapter.NewForecastGrpcServer(engineService)
 
 	srv := &http.Server{
 		Addr:              grpcPort,
-		Handler:           mux,
+		Handler:           newMux(grpcSrv),
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 
+	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("pfm-forecast-engine-go listening on %s (HTTP/2 & gRPC)", grpcPort)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("forecast engine server error: %v", err)
+			errCh <- err
 		}
 	}()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	select {
+	case err := <-errCh:
+		grpcSrv.GracefulStop()
+		return err
+	case <-ctx.Done():
+	}
 	_ = srv.Close()
 	grpcSrv.GracefulStop()
+	return nil
 }

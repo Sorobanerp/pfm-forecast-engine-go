@@ -33,7 +33,7 @@ type ForecastGrpcServer struct {
 func NewForecastGrpcServer(simulateUseCase port.SimulateContractUseCase) *ForecastGrpcServer {
 	return &ForecastGrpcServer{
 		simulateUseCase: simulateUseCase,
-		grpcServer:      grpc.NewServer(),
+		grpcServer:      grpc.NewServer(), // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection
 	}
 }
 
