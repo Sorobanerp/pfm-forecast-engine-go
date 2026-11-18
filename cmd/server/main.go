@@ -17,6 +17,7 @@ import (
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/adapter/in/kafka"
 	redisadapter "github.com/dantas-pfm/pfm-forecast-engine-go/internal/adapter/out/redis"
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/application/service"
+	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/observability"
 	"go.opentelemetry.io/otel"
 )
 
@@ -68,6 +69,7 @@ func newMux(grpcSrv *grpcadapter.ForecastGrpcServer) *http.ServeMux {
 
 // run wires the service and blocks until ctx is cancelled or the HTTP server fails.
 func run(ctx context.Context, getenv func(string) string) error {
+	_ = observability.InitOtlpConfig(getenv, "pfm-forecast-engine-go")
 	_ = otel.Tracer("pfm-forecast-engine-go")
 
 	redisAddr := getenv("REDIS_ADDR")
