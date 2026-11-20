@@ -198,3 +198,22 @@ func TestResilientRedisCacheAdapter_ClientFailureGracefulFallback(t *testing.T) 
 	require.NotNil(t, res)
 	assert.Equal(t, "tenant-fail", res.TenantID)
 }
+
+func TestUpstashRedisCacheAdapter_TLSAndRESP3(t *testing.T) {
+	aURL := NewUpstashRedisCacheAdapter(RedisConfig{
+		Addr:     "rediss://default:token@upstash-redis.upstash.io:6379",
+		Protocol: 3,
+	})
+	require.NotNil(t, aURL)
+	require.NotNil(t, aURL.client)
+	assert.Equal(t, 3, aURL.client.Options().Protocol)
+	assert.NotNil(t, aURL.client.Options().TLSConfig)
+
+	t.Setenv("REDIS_TLS", "true")
+	t.Setenv("REDIS_PASSWORD", "env-secret")
+	aEnv := NewRedisCacheAdapterFromEnv("upstash-redis.upstash.io:6379")
+	require.NotNil(t, aEnv)
+	require.NotNil(t, aEnv.client)
+	assert.Equal(t, 3, aEnv.client.Options().Protocol)
+	assert.NotNil(t, aEnv.client.Options().TLSConfig)
+}
