@@ -2,9 +2,12 @@ package redisadapter
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,17 +37,54 @@ type ResilientRedisCacheAdapter struct {
 	fallbackData map[string]domain.RunRateForecastResult
 }
 
+// RedisConfig configures Upstash Redis / Valkey Serverless connectivity (TLS + RESP3).
+type RedisConfig struct {
+	Addr     string
+	Password string
+	UseTLS   bool
+	Protocol int // 2 for RESP2, 3 for RESP3 (default)
+}
+
 func NewResilientRedisCacheAdapter(addr string) *ResilientRedisCacheAdapter {
+	return NewUpstashRedisCacheAdapter(RedisConfig{
+		Addr:     addr,
+		Protocol: 3,
+	})
+}
+
+// NewUpstashRedisCacheAdapter creates a cache adapter compatible with Upstash Redis / Valkey Serverless (TLS + RESP3).
+func NewUpstashRedisCacheAdapter(cfg RedisConfig) *ResilientRedisCacheAdapter {
 	var client *redis.Client
-	if addr != "" {
-		client = redis.NewClient(&redis.Options{
-			Addr:         addr,
+	proto := cfg.Protocol
+	if proto != 2 && proto != 3 {
+		proto = 3
+	}
+	if strings.HasPrefix(cfg.Addr, "rediss://") || strings.HasPrefix(cfg.Addr, "redis://") {
+		if opts, err := redis.ParseURL(cfg.Addr); err == nil {
+			opts.Protocol = proto
+			opts.DialTimeout = DefaultRedisTimeout
+			opts.ReadTimeout = DefaultRedisTimeout
+			opts.WriteTimeout = DefaultRedisTimeout
+			if strings.HasPrefix(cfg.Addr, "rediss://") && opts.TLSConfig == nil {
+				opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+			}
+			client = redis.NewClient(opts)
+		}
+	} else if cfg.Addr != "" {
+		opts := &redis.Options{
+			Addr:         cfg.Addr,
+			Password:     cfg.Password,
+			Protocol:     proto,
 			DialTimeout:  DefaultRedisTimeout,
 			ReadTimeout:  DefaultRedisTimeout,
 			WriteTimeout: DefaultRedisTimeout,
 			PoolSize:     32,
 			MinIdleConns: 4,
-		})
+		}
+		if cfg.UseTLS {
+			opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		client = redis.NewClient(opts)
 	}
 	return &ResilientRedisCacheAdapter{
 		client:           client,
@@ -55,6 +95,17 @@ func NewResilientRedisCacheAdapter(addr string) *ResilientRedisCacheAdapter {
 		state:            "CLOSED",
 		fallbackData:     make(map[string]domain.RunRateForecastResult),
 	}
+}
+
+// NewRedisCacheAdapterFromEnv creates an Upstash Redis/Valkey RESP3 adapter from environment variables.
+func NewRedisCacheAdapterFromEnv(addr string) *ResilientRedisCacheAdapter {
+	useTLS := strings.EqualFold(strings.TrimSpace(os.Getenv("REDIS_TLS")), "true") || strings.HasPrefix(addr, "rediss://")
+	return NewUpstashRedisCacheAdapter(RedisConfig{
+		Addr:     addr,
+		Password: os.Getenv("REDIS_PASSWORD"),
+		UseTLS:   useTLS,
+		Protocol: 3,
+	})
 }
 
 func (a *ResilientRedisCacheAdapter) SaveForecastSnapshot(

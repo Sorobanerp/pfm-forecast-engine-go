@@ -146,3 +146,28 @@ func TestDaysInMonth(t *testing.T) {
 		}
 	}
 }
+
+func TestForecastPlanQuotaValidation(t *testing.T) {
+	t.Parallel()
+	svc := NewForecastEngineService(nil)
+	input := domain.RunRateInput{
+		TenantID: "tenant-1", ReferenceMonth: "2026-11",
+		CurrentDayOfMonth: 15, TotalDaysInMonth: 30,
+		VariableSpendToDate: decimal.NewFromInt(1500), RegularNetIncome: decimal.NewFromInt(8000),
+	}
+
+	if _, err := svc.RecalculateMonthlyForecastForPlan(context.Background(), input, "FREE", 30); !errors.Is(err, ErrPlanQuotaExceeded) {
+		t.Fatalf("expected ErrPlanQuotaExceeded for FREE plan, got %v", err)
+	}
+	if _, err := svc.RecalculateMonthlyForecastForPlan(context.Background(), input, "INDIVIDUAL_PRO", 120); !errors.Is(err, ErrPlanQuotaExceeded) {
+		t.Fatalf("expected ErrPlanQuotaExceeded for horizon > 90, got %v", err)
+	}
+	if _, err := svc.RecalculateMonthlyForecastForPlan(context.Background(), input, "UNKNOWN", 30); !errors.Is(err, ErrPlanQuotaExceeded) {
+		t.Fatalf("expected ErrPlanQuotaExceeded for unknown plan, got %v", err)
+	}
+
+	res, err := svc.RecalculateMonthlyForecastForPlan(context.Background(), input, "FAMILY_PLUS", 90)
+	if err != nil || res.TenantID != "tenant-1" {
+		t.Fatalf("expected valid forecast for FAMILY_PLUS, got res=%+v err=%v", res, err)
+	}
+}

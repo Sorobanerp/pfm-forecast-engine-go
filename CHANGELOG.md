@@ -7,6 +7,8 @@ Todas as alterações notáveis neste repositório são documentadas neste arqui
 ## [Unreleased]
 
 ### Added
+- Compatibilidade do adaptador de cache com **Upstash Redis / Valkey Serverless (`TLS` + `RESP3`)** via `NewUpstashRedisCacheAdapter` e `NewRedisCacheAdapterFromEnv`.
+- Validação de quotas por plano do tenant (`ValidateForecastQuota` / `RecalculateMonthlyForecastForPlan`: `FREE` bloqueado para projeção preditiva; `INDIVIDUAL_PRO` e `FAMILY_PLUS` até 90 dias).
 - Padronização de governança DevEx (`README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`) e workflow de validação de **Conventional Commits** em Pull Requests para `develop` e `main`.
 
 ---
