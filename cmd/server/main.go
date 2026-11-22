@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,9 +20,12 @@ import (
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/application/service"
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/observability"
 	"go.opentelemetry.io/otel"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 func main() {
+	loadDotEnvLocal(".env.local")
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Getenv); err != nil {
@@ -30,11 +34,39 @@ func main() {
 	}
 }
 
+func loadDotEnvLocal(path string) {
+	f, err := os.Open(path) // #nosec G304
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key := strings.TrimSpace(k)
+		val := strings.Trim(strings.TrimSpace(v), `"'`)
+		if key != "" && os.Getenv(key) == "" {
+			_ = os.Setenv(key, val)
+		}
+	}
+}
+
 // resolveGrpcAddr returns the listen address, defaulting the port and prefixing ":" when needed.
 func resolveGrpcAddr(getenv func(string) string) string {
 	grpcPort := getenv("GRPC_PORT")
 	if grpcPort == "" {
-		grpcPort = "18110"
+		if strings.EqualFold(strings.TrimSpace(getenv("APP_ENV")), "local") {
+			grpcPort = "9091"
+		} else {
+			grpcPort = "18110"
+		}
 	}
 	if !strings.Contains(grpcPort, ":") {
 		grpcPort = ":" + grpcPort
@@ -47,7 +79,7 @@ func newMux(grpcSrv *grpcadapter.ForecastGrpcServer) *http.ServeMux {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"UP","service":"pfm-forecast-engine-go","port":18110}`))
+		_, _ = w.Write([]byte(`{"status":"UP","service":"pfm-forecast-engine-go","port":9091,"reflection":true}`))
 	})
 	mux.HandleFunc("POST /pfm.v1.ForecastService/SimulateContractAmortization", func(w http.ResponseWriter, r *http.Request) {
 		var dto grpcadapter.SimulateContractRequestDTO
@@ -67,20 +99,40 @@ func newMux(grpcSrv *grpcadapter.ForecastGrpcServer) *http.ServeMux {
 	return mux
 }
 
+func newH2CMultiplexHandler(grpcSrv *grpcadapter.ForecastGrpcServer) http.Handler {
+	mux := newMux(grpcSrv)
+	mixed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcSrv.ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	return h2c.NewHandler(mixed, &http2.Server{})
+}
+
 // run wires the service and blocks until ctx is cancelled or the HTTP server fails.
 func run(ctx context.Context, getenv func(string) string) error {
 	_ = observability.InitOtlpConfig(getenv, "pfm-forecast-engine-go")
 	_ = otel.Tracer("pfm-forecast-engine-go")
 
+	isLocal := strings.EqualFold(strings.TrimSpace(getenv("APP_ENV")), "local")
 	redisAddr := getenv("REDIS_ADDR")
 	if redisAddr == "" {
-		redisAddr = "localhost:16379"
+		if isLocal {
+			redisAddr = "localhost:6379"
+		} else {
+			redisAddr = "localhost:16379"
+		}
 	}
 	grpcPort := resolveGrpcAddr(getenv)
 
 	cacheAdapter := redisadapter.NewResilientRedisCacheAdapter(redisAddr)
 	engineService := service.NewForecastEngineService(cacheAdapter)
 	brokers := "localhost:19092"
+	if isLocal {
+		brokers = "localhost:9092"
+	}
 	if v := strings.TrimSpace(getenv("KAFKA_BROKERS")); v != "" {
 		brokers = v
 	}
@@ -91,13 +143,13 @@ func run(ctx context.Context, getenv func(string) string) error {
 
 	srv := &http.Server{
 		Addr:              grpcPort,
-		Handler:           newMux(grpcSrv),
+		Handler:           newH2CMultiplexHandler(grpcSrv),
 		ReadHeaderTimeout: 3 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("pfm-forecast-engine-go listening on %s (HTTP/2 & gRPC)", grpcPort)
+		log.Printf("pfm-forecast-engine-go listening on %s (HTTP/2 h2c & gRPC Server Reflection enabled)", grpcPort)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
