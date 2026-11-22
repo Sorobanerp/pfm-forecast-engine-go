@@ -2,8 +2,12 @@ package grpcadapter
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/application/port"
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/domain"
@@ -85,8 +89,47 @@ func (b *forecastProtoBridge) SimulateContractAmortization(
 	}, nil
 }
 
+func datadogGrpcLoggingInterceptor(
+	ctx context.Context,
+	req any,
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (any, error) {
+	start := time.Now()
+	resp, err := handler(ctx, req)
+	level := "DEBUG"
+	errStr := ""
+	if err != nil {
+		level = "ERROR"
+		errStr = err.Error()
+	}
+	envName := os.Getenv("APP_ENV")
+	if envName == "" {
+		envName = "local"
+	}
+	rawReq, _ := json.Marshal(req)
+	logMap := map[string]any{
+		"timestamp":               time.Now().UTC().Format(time.RFC3339Nano),
+		"level":                   level,
+		"service":                 "pfm-forecast-engine-go",
+		"env":                     envName,
+		"cloudwatch_logs_enabled": false,
+		"dd.trace_id":             fmt.Sprintf("%d", start.UnixNano()),
+		"grpc.method":             info.FullMethod,
+		"duration_ms":             time.Since(start).Milliseconds(),
+		"payload_preview":         string(rawReq),
+	}
+	if errStr != "" {
+		logMap["error.stack"] = errStr
+	}
+	if rawLog, mErr := json.Marshal(logMap); mErr == nil {
+		_, _ = fmt.Fprintln(os.Stdout, string(rawLog))
+	}
+	return resp, err
+}
+
 func NewForecastGrpcServer(simulateUseCase port.SimulateContractUseCase) *ForecastGrpcServer {
-	grpcSrv := grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection
+	grpcSrv := grpc.NewServer(grpc.UnaryInterceptor(datadogGrpcLoggingInterceptor)) // nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection
 	s := &ForecastGrpcServer{
 		simulateUseCase: simulateUseCase,
 		grpcServer:      grpcSrv,
