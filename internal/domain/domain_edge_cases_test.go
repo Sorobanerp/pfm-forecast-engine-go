@@ -30,11 +30,22 @@ func TestContractAmortizationSimulator_EdgeCasesAndValidation(t *testing.T) {
 	_, err := sim.Simulate(badBal)
 	assert.ErrorIs(t, err, ErrInvalidBalance)
 
-	// 2. RemainingInstallments <= 0
+	// 2. RemainingInstallments <= 0 or > 600
 	badInst := baseInput
 	badInst.RemainingInstallments = 0
 	_, err = sim.Simulate(badInst)
 	assert.ErrorIs(t, err, ErrInvalidInstallments)
+
+	tooManyInst := baseInput
+	tooManyInst.RemainingInstallments = 601
+	_, err = sim.Simulate(tooManyInst)
+	assert.ErrorIs(t, err, ErrInvalidInstallments)
+
+	// 2b. Negative or excessive rate / fees
+	badRate := baseInput
+	badRate.MonthlyInterestRate = decimal.NewFromFloat(-0.01)
+	_, err = sim.Simulate(badRate)
+	assert.ErrorIs(t, err, ErrInvalidRateOrFee)
 
 	// 3. ExtraAmortization exceeds balance
 	badExtra := baseInput
