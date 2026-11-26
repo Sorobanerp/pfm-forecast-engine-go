@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -9,6 +12,25 @@ import (
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/domain"
 	"github.com/shopspring/decimal"
 )
+
+var ErrPlanQuotaExceeded = errors.New("predictive forecast not allowed for tenant subscription plan")
+
+// ValidateForecastQuota enforces tenant plan quotas (PRD US-12):
+// FREE: predictive forecast disabled (0 days); INDIVIDUAL_PRO / FAMILY_PLUS: up to 90 days.
+func ValidateForecastQuota(plan string, horizonDays int) error {
+	normalized := strings.ToUpper(strings.TrimSpace(plan))
+	switch normalized {
+	case "FREE":
+		return fmt.Errorf("%w: FREE plan does not include predictive cashflow forecast", ErrPlanQuotaExceeded)
+	case "INDIVIDUAL_PRO", "FAMILY_PLUS":
+		if horizonDays < 1 || horizonDays > 90 {
+			return fmt.Errorf("%w: horizonDays must be between 1 and 90 (got %d)", ErrPlanQuotaExceeded, horizonDays)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unknown subscription plan %q", ErrPlanQuotaExceeded, plan)
+	}
+}
 
 type ForecastEngineService struct {
 	forecaster *domain.RunRateForecaster
@@ -25,6 +47,18 @@ func NewForecastEngineService(cachePort port.ReadModelCachePort) *ForecastEngine
 		cachePort:  cachePort,
 		states:     make(map[string]domain.RunRateInput),
 	}
+}
+
+func (s *ForecastEngineService) RecalculateMonthlyForecastForPlan(
+	ctx context.Context,
+	input domain.RunRateInput,
+	plan string,
+	horizonDays int,
+) (domain.RunRateForecastResult, error) {
+	if err := ValidateForecastQuota(plan, horizonDays); err != nil {
+		return domain.RunRateForecastResult{}, err
+	}
+	return s.RecalculateMonthlyForecast(ctx, input)
 }
 
 func (s *ForecastEngineService) RecalculateMonthlyForecast(

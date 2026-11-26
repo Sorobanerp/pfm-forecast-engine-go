@@ -1,0 +1,20 @@
+@forecastUrl = http://localhost:9091
+
+### 1. Forecast Engine Healthcheck
+GET {{forecastUrl}}/health
+
+### 2. Simulate Contract Amortization (SAC Reduce Term)
+POST {{forecastUrl}}/pfm.v1.ForecastService/SimulateContractAmortization
+Content-Type: application/json
+
+{
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "contract_id": "33333333-3333-3333-3333-333333333333",
+  "amortization_system": "SAC",
+  "prepayment_strategy": "REDUCE_TERM",
+  "outstanding_balance": "240000.00",
+  "remaining_installments": 120,
+  "monthly_interest_rate": "0.0085",
+  "monthly_insurance_and_fees": "65.00",
+  "extra_amortization_amount": "20000.00"
+}

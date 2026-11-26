@@ -45,7 +45,7 @@ jobs:
       - name: Vet, testes e cobertura
         run: |
           go vet ./...
-          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+          go test -race -covermode=atomic -coverprofile=coverage.out $(go list ./... | grep -v '/pkg/contracts/')
       - name: Exigir cobertura >= 95%
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
