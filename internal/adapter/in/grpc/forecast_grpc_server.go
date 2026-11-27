@@ -11,6 +11,7 @@ import (
 
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/application/port"
 	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/domain"
+	"github.com/dantas-pfm/pfm-forecast-engine-go/internal/observability"
 	pfmv1 "github.com/dantas-pfm/pfm-forecast-engine-go/pkg/contracts/pfmv1"
 	"github.com/shopspring/decimal"
 	"google.golang.org/grpc"
@@ -117,10 +118,10 @@ func datadogGrpcLoggingInterceptor(
 		"dd.trace_id":             fmt.Sprintf("%d", start.UnixNano()),
 		"grpc.method":             info.FullMethod,
 		"duration_ms":             time.Since(start).Milliseconds(),
-		"payload_preview":         string(rawReq),
+		"payload_preview":         observability.MaskSensitivePII(string(rawReq)),
 	}
 	if errStr != "" {
-		logMap["error.stack"] = errStr
+		logMap["error.stack"] = observability.MaskSensitivePII(errStr)
 	}
 	if rawLog, mErr := json.Marshal(logMap); mErr == nil {
 		_, _ = fmt.Fprintln(os.Stdout, string(rawLog))

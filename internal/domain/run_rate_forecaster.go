@@ -59,10 +59,11 @@ func NewRunRateForecaster() *RunRateForecaster {
 }
 
 func (f *RunRateForecaster) ForecastMonthlyRunRate(input RunRateInput) (RunRateForecastResult, error) {
-	if input.CurrentDayOfMonth < 1 || input.TotalDaysInMonth < 28 || input.CurrentDayOfMonth > input.TotalDaysInMonth {
+	if input.CurrentDayOfMonth < 1 || input.TotalDaysInMonth < 28 || input.TotalDaysInMonth > 31 || input.CurrentDayOfMonth > input.TotalDaysInMonth {
 		return RunRateForecastResult{}, ErrInvalidDaysInMonth
 	}
-	if !input.RegularNetIncome.IsPositive() {
+	maxIncome := decimal.NewFromInt(1_000_000_000)
+	if !input.RegularNetIncome.IsPositive() || input.RegularNetIncome.GreaterThan(maxIncome) {
 		return RunRateForecastResult{}, ErrNegativeIncome
 	}
 

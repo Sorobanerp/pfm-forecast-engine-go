@@ -23,10 +23,15 @@ const (
 	StrategyReduceInstallment PrepaymentStrategy = "REDUCE_INSTALLMENT"
 )
 
+const (
+	MaxRemainingInstallments = 600 // Maximum 50 years (600 months) to prevent CPU DoS (OWASP A04)
+)
+
 var (
-	ErrInvalidBalance      = errors.New("outstanding balance must be strictly positive")
-	ErrInvalidInstallments = errors.New("remaining installments must be >= 1")
-	ErrInvalidExtraAmount  = errors.New("extra amortization amount must be >= 0 and < outstanding balance")
+	ErrInvalidBalance      = errors.New("outstanding balance must be strictly positive and <= 1000000000")
+	ErrInvalidInstallments = errors.New("remaining installments must be between 1 and 600")
+	ErrInvalidExtraAmount  = errors.New("extra amortization amount must be >= 0 and <= outstanding balance")
+	ErrInvalidRateOrFee    = errors.New("interest rate, admin fee rate, readjustment rate and monthly fees must be within safe bounds")
 )
 
 // ContractSimulationInput holds immutable parameters for SAC, Price, and Consórcio simulation (UC-04).
@@ -90,14 +95,22 @@ func NewContractAmortizationSimulator() *ContractAmortizationSimulator {
 }
 
 func (s *ContractAmortizationSimulator) Simulate(input ContractSimulationInput) (ContractSimulationOutput, error) {
-	if !input.OutstandingBalance.IsPositive() {
+	maxBalance := decimal.NewFromInt(1_000_000_000)
+	maxRate := decimal.NewFromInt(1)
+	if !input.OutstandingBalance.IsPositive() || input.OutstandingBalance.GreaterThan(maxBalance) {
 		return ContractSimulationOutput{}, ErrInvalidBalance
 	}
-	if input.RemainingInstallments < 1 {
+	if input.RemainingInstallments < 1 || input.RemainingInstallments > MaxRemainingInstallments {
 		return ContractSimulationOutput{}, ErrInvalidInstallments
 	}
 	if input.ExtraAmortizationAmount.IsNegative() || input.ExtraAmortizationAmount.GreaterThanOrEqual(input.OutstandingBalance) {
 		return ContractSimulationOutput{}, ErrInvalidExtraAmount
+	}
+	if input.MonthlyInterestRate.IsNegative() || input.MonthlyInterestRate.GreaterThan(maxRate) ||
+		input.ConsorcioAdminFeeRate.IsNegative() || input.ConsorcioAdminFeeRate.GreaterThan(maxRate) ||
+		input.ConsorcioReadjustmentRate.IsNegative() || input.ConsorcioReadjustmentRate.GreaterThan(maxRate) ||
+		input.MonthlyInsuranceAndFees.IsNegative() || input.MonthlyInsuranceAndFees.GreaterThan(input.OutstandingBalance) {
+		return ContractSimulationOutput{}, ErrInvalidRateOrFee
 	}
 
 	startMonth := input.StartCompetenceMonth
